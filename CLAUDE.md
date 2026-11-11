@@ -20,6 +20,7 @@ API Java (Spring Boot) que o app **Antídoto** consome. **Não é a entrega da d
 | Docs       | springdoc-openapi 3 → `/swagger-ui.html`                                                        |
 | JSON       | Jackson 3 (`tools.jackson`), padrão do Boot 4. Datas `Instant` em ISO-8601 UTC                  |
 | Segurança  | Spring Security + JWT (JJWT 0.12, HS256, 24 h), BCrypt                                          |
+| IA         | Spring AI 2.0 (BOM + `spring-ai-starter-model-openai`): o cliente OpenAI apontando para o Groq  |
 | Testes     | JUnit 5, AssertJ, MockMvc (`@SpringBootTest` + `@AutoConfigureMockMvc` ou `standaloneSetup`)   |
 | Build      | Gradle wrapper (`./gradlew test`, `./gradlew bootJar`)                                          |
 
@@ -35,7 +36,7 @@ br.com.fiap.antidoto
 ├── config/       RelogioConfig (bean Clock), OpenApiConfig (Bearer no Swagger), AssincronoConfig (@EnableAsync), DadosIniciais (usuários, as 12 unidades fictícias, 3 avistamentos e 1 ocorrência do cidadão), BancoDoRender (DATABASE_URL → JDBC, em META-INF/spring.factories)
 ├── controller/   AuthController, UsuarioController, UnidadeController, AvistamentoController, OcorrenciaController
 ├── dto/          PaginaResponse; erro/ (ErroResponse, CampoErroResponse); usuario/ (CadastroRequest, LoginRequest, AtualizarUsuarioRequest, UsuarioResponse, AuthResponse); unidade/ (UnidadeProximaResponse, UnidadeResponse); avistamento/ (AvistamentoRequest, AvistamentoResponse); ocorrencia/ (OcorrenciaRequest, OcorrenciaResponse, ResultadoUrgencia)
-├── ia/           ResumoModeloPadrao (resumo por modelo de texto). Passo 7: ResumoIaService (Spring AI)
+├── ia/           ResumoIaService (Spring AI → Groq, com tempo limite e conferência da resposta), ResumoModeloPadrao (modelo de texto e os dadosDaTriagem que vão para a IA)
 ├── mensageria/   OcorrenciaCriadaEvento, ResumoOcorrenciaConsumer (@Async depois do commit; sem RabbitMQ)
 ├── exception/    TratadorGlobalDeErros, RecursoNaoEncontradoException, RegraDeNegocioException, ConflitoException, CredenciaisInvalidasException
 ├── mapper/       UsuarioMapper, UnidadeMapper, AvistamentoMapper, OcorrenciaMapper (entidade → DTO; avisos RN-G2/RN-G7)
@@ -115,13 +116,19 @@ Todo erro sai no formato do contrato, montado pelo `TratadorGlobalDeErros`:
 - **RN-U:** `UrgenciaService` é a cópia exata do `utils/urgencia.ts` do app (mesmos motivos, mesma ordem, os mesmos 10 casos em `UrgenciaServiceTest`). Mudou um? Muda o outro, combinando antes. A IA **nunca** decide a urgência.
 - **RN-G4:** hora da picada entre agora (+5 min) e 72 h atrás; fora disso, `RegraDeNegocioException("horaPicada", ...)`. Unidade de destino inexistente ou desativada: 404.
 - **Fluxo do resumo:** o `POST` salva com `PENDENTE` e publica `OcorrenciaCriadaEvento`; o `ResumoOcorrenciaConsumer` roda **depois do commit**, em outra thread (`@Async` + `@TransactionalEventListener(AFTER_COMMIT)` + `REQUIRES_NEW`), e é idempotente (só mexe se ainda estiver `PENDENTE`). Sem RabbitMQ: é o modo `@Async` do MVP-01 §9.
-- **Resumo:** hoje sempre o `ResumoModeloPadrao` → `MODELO_PADRAO`. Só dados da triagem (RN-G6), hora em Brasília, nunca dose ou remédio. **Não logar o texto do resumo** (só id, status e tempo).
+- **Resumo:** com `antidoto.ia.habilitada=true` (`IA_HABILITADA`), o consumer tenta o `ResumoIaService`: deu certo → texto da IA e `PRONTO`. Desligada ou falhou → `ResumoModeloPadrao` e `MODELO_PADRAO`. A ocorrência nunca fica sem resumo.
+- **O que vai para a IA:** só `"Dados da ocorrência:\n" + ResumoModeloPadrao.dadosDaTriagem(...)` (animal, faixa etária, hora e tempo, sintomas com ALERTA, urgência e motivos, nome da unidade). Nada de nome, e-mail, telefone ou coordenadas (RN-G6). As instruções ficam em `ResumoIaService.INSTRUCOES` (system prompt).
+- **Quando a IA não vale:** qualquer exceção (rede, 401, 429, 5xx), mais de `antidoto.ia.tempo-limite-em-segundos` (6 s; `orTimeout`), resposta vazia, com mais de 1200 caracteres ou com dose/mg/ml/ampola/medicamento (`ResumoIaService.validar`). Sem novas tentativas (`max-retries=0`): o app consulta a cada 3 s e o modelo padrão é a reserva.
+- **Modelo:** `openai/gpt-oss-120b` (`IA_MODELO`), `reasoning-effort=low`, `temperature=0.2`, `max-completion-tokens=800`. O `llama-3.3-70b-versatile` do MVP-01 saiu do plano grátis do Groq em 16/08/2026. O starter liga só o chat (`spring.ai.model.*=none` nos outros).
+- **Chave:** só `GROQ_API_KEY` (variável de ambiente; no Render, `sync: false`). Nunca no Git, no `application.properties` ou no app. Sem ela, o padrão `desligado` deixa a API subir.
+- Hora em Brasília, nunca dose ou remédio. **Não logar o texto do resumo nem os dados da triagem** (só id, status, tempo e o nome da exceção).
+- **Testes:** `ResumoIaServiceTest` (a conferência) e `ResumoIaIntegracaoTest` (um servidor falso no lugar do Groq: o que o Spring AI manda, `PRONTO`, dose, lentidão e erro → `MODELO_PADRAO`). Nenhum teste chama o Groq de verdade.
 - A resposta sempre traz `ligar192` (EMERGENCIA), `aviso` (RN-G2) e `avisoResumo` (RN-G7), as constantes do `OcorrenciaMapper`.
 
 ## 9. Deploy (Render)
 
 - `render.yaml` (Blueprint): Postgres `free` + web service Docker `free`, os dois em `virginia`; `healthCheckPath: /actuator/health`; deploy a cada commit.
-- Variáveis no Render: `DATABASE_URL` (do banco, `postgresql://...`), `JWT_SECRET` (`generateValue`, base64 de 256 bits), `CORS_ORIGENS`, `CARREGAR_DADOS_INICIAIS`. O Render define a `PORT`.
+- Variáveis no Render: `DATABASE_URL` (do banco, `postgresql://...`), `JWT_SECRET` (`generateValue`, base64 de 256 bits), `CORS_ORIGENS`, `CARREGAR_DADOS_INICIAIS`, `GROQ_API_KEY` (`sync: false`: o Render pede o valor só na criação do Blueprint; num Blueprint que já existe, cadastrar à mão em Environment), `IA_HABILITADA`, `IA_MODELO`. O Render define a `PORT`.
 - `BancoDoRender` (EnvironmentPostProcessor) converte a `DATABASE_URL` em `spring.datasource.*`; `DB_URL` manual tem prioridade.
 - Plano grátis: 512 MB e 0,1 de CPU → JVM com `-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xss512k`. A API dorme após 15 min sem tráfego: um monitor (UptimeRobot, 5 min) no `/actuator/health` mantém acordada.
 - Postgres grátis expira em 30 dias: serve para esta API (que não é a entrega), não para guardar dados.
@@ -148,7 +155,7 @@ Parâmetros `pagina` (padrão 0) e `tamanho` (padrão 20, máximo 50). Resposta 
 - `ddl-auto=update/create`; editar migração que já rodou.
 - Regra de negócio no controller; `@Autowired` em campo; `System.out.println`; `catch` vazio.
 - 403 para recurso de outro usuário (é 404).
-- Senha, token ou segredo no código ou no log; commitar o `.env`.
+- Senha, token, segredo ou a chave da IA no código ou no log; commitar o `.env`.
 - Mandar nome, e-mail, telefone ou coordenadas para a IA; falar de dose ou remédio no resumo.
 - Deixar a ocorrência falhar por causa do resumo: sempre há o modelo padrão.
 

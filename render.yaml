@@ -33,3 +33,11 @@ services:
       # Usuários de teste, 12 unidades fictícias e os exemplos do cidadão
       - key: CARREGAR_DADOS_INICIAIS
         value: "true"
+      # IA do resumo (Groq). A chave não vai para o Git: o Render pede o valor ao criar o
+      # Blueprint. Sem chave (ou se o Groq falhar), vale o resumo do modelo padrão.
+      - key: GROQ_API_KEY
+        sync: false
+      - key: IA_HABILITADA
+        value: "true"
+      - key: IA_MODELO
+        value: openai/gpt-oss-120b

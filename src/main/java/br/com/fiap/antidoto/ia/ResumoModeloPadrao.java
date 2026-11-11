@@ -31,8 +31,15 @@ public class ResumoModeloPadrao {
     private static final DateTimeFormatter DIA_E_HORA = DateTimeFormatter.ofPattern("dd/MM HH:mm");
 
     public String montar(Ocorrencia ocorrencia, Instant agora) {
+        return "PRÉ-ATENDIMENTO — Antídoto\n" + dadosDaTriagem(ocorrencia, agora);
+    }
+
+    /**
+     * As 5 linhas de dados (sem o cabeçalho). É também o que vai para a IA
+     * (ResumoIaService): só dados da triagem, nada que identifique a pessoa.
+     */
+    public String dadosDaTriagem(Ocorrencia ocorrencia, Instant agora) {
         return String.join("\n",
-                "PRÉ-ATENDIMENTO — Antídoto",
                 "Animal: " + ocorrencia.getTipoAnimal().getRotulo()
                         + " · Faixa etária: " + ocorrencia.getFaixaEtaria().getRotulo(),
                 "Picada: " + horaDaPicada(ocorrencia.getHoraPicada(), agora)

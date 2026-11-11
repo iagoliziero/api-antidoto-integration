@@ -18,6 +18,12 @@ repositories {
 	mavenCentral()
 }
 
+dependencyManagement {
+	imports {
+		mavenBom 'org.springframework.ai:spring-ai-bom:2.0.2'
+	}
+}
+
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
@@ -26,6 +32,9 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 	implementation 'org.springframework.boot:spring-boot-starter-security'
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3'
+
+	// IA do resumo (MVP-01 §8): Spring AI com o cliente OpenAI apontando para o Groq
+	implementation 'org.springframework.ai:spring-ai-starter-model-openai'
 
 	// JWT (MVP-01 §5): HS256, validade de 24 h
 	implementation 'io.jsonwebtoken:jjwt-api:0.12.7'

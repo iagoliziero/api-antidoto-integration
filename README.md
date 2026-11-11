@@ -22,14 +22,15 @@ API REST que o app **Antídoto** consome (Global Solution 2026/2 · FIAP · Citi
 | 4     | CRUD de avistamentos (só o dono)                                                           | ✅       |
 | 5     | Ocorrências: urgência (RN-U) e resumo de pré-atendimento em segundo plano                  | ✅       |
 | 6     | Deploy no Render (Postgres) e o app apontando para a API                                   | 🔜 arquivos prontos; falta criar no Render |
-| 7     | (Opcional) Resumo com IA de verdade (Spring AI + Groq)                                     | ⏳       |
+| 7     | (Opcional) Resumo com IA de verdade (Spring AI + Groq), com o modelo padrão de reserva     | ✅ falta a chave no Render |
 
 ---
 
 ## 🛠️ Tecnologias
 
 Java 21 · Spring Boot 4 (Web MVC, Validation, Data JPA, Security, Actuator) · JWT (JJWT) · Flyway · H2 (computador e testes) ·
-PostgreSQL (Render) · springdoc-openapi (Swagger) · JUnit 5 + MockMvc · Gradle (wrapper) · Docker.
+PostgreSQL (Render) · Spring AI (cliente OpenAI apontando para o Groq) · springdoc-openapi (Swagger) · JUnit 5 + MockMvc ·
+Gradle (wrapper) · Docker.
 
 ---
 
@@ -61,8 +62,16 @@ login, copie o `token` e cole em **Authorize**.
 ### Resumo de pré-atendimento
 
 Ao registrar uma ocorrência, a API responde na hora com o resumo `PENDENTE` e, depois do commit,
-gera o resumo **em segundo plano** (`@Async`). Hoje ele é montado por modelo de texto
-(`MODELO_PADRAO`), só com os dados da triagem, sem nome, e-mail, telefone ou coordenadas (RN-G6):
+gera o resumo **em segundo plano** (`@Async`). Ele usa só os dados da triagem: nada de nome, e-mail,
+telefone ou coordenadas (RN-G6).
+
+- **Com a IA ligada** (`IA_HABILITADA=true` e a `GROQ_API_KEY`): o texto vem do Groq e o resumo fica
+  `PRONTO`.
+- **Sem a IA, ou se ela falhar** (erro, chave inválida, mais de 6 s, resposta vazia, longa demais ou
+  falando de dose ou remédio): vale o modelo de texto, com o status `MODELO_PADRAO`. A ocorrência
+  nunca fica sem resumo.
+
+O modelo de texto:
 
 ```
 PRÉ-ATENDIMENTO — Antídoto
@@ -73,7 +82,31 @@ Urgência: EMERGÊNCIA — Sinal de alerta; Escorpião em criança
 Destino: Hospital Exemplo Centro
 ```
 
-A IA de verdade (Spring AI + Groq) é o Passo 7, opcional; se ela falhar, continua valendo este modelo.
+### IA do resumo (Groq)
+
+A API fala com o Groq pelo **Spring AI**, com o cliente da OpenAI apontando para
+`https://api.groq.com/openai/v1` (o Groq aceita a mesma API). O modelo é o `openai/gpt-oss-120b`,
+com raciocínio baixo, temperatura 0,2 e até 800 tokens; as instruções (em
+`ResumoIaService.INSTRUCOES`) pedem no máximo 6 linhas, só com os dados enviados, e proíbem sugerir
+tratamento, remédio ou dose. A chave **só existe na API** (variável de ambiente): o app nunca a vê.
+
+1. Crie uma conta grátis no [GroqCloud](https://console.groq.com) e uma chave em
+   [API Keys](https://console.groq.com/keys) (começa com `gsk_`). Copie e guarde num lugar seguro;
+   não cole em nenhum arquivo do projeto.
+2. No computador:
+
+   ```bash
+   GROQ_API_KEY=gsk_... IA_HABILITADA=true ./gradlew bootRun
+   ```
+
+   No Windows (PowerShell): `$env:GROQ_API_KEY="gsk_..."; $env:IA_HABILITADA="true"; .\gradlew.bat bootRun`.
+3. Registre uma ocorrência (no app ou no Swagger) e veja o log: `Resumo da ocorrência N: PRONTO em ... ms`.
+   Com `MODELO_PADRAO`, a linha de cima diz o motivo: `IA indisponível ...` (erro, chave inválida ou
+   tempo esgotado) ou `resposta descartada` (vazia, longa demais ou falando de dose). O log nunca
+   mostra os dados da triagem nem o texto do resumo.
+
+No Render, a chave vai em **Environment** (veja o deploy). Os limites do plano grátis ficam em
+[console.groq.com/settings/limits](https://console.groq.com/settings/limits).
 
 ### Unidades de saúde (fictícias)
 
@@ -137,9 +170,17 @@ na mesma região, ligados pela rede interna.
 4. Copie a URL do serviço (algo como `https://antidoto-api.onrender.com`; se o nome já existir, o
    Render acrescenta um sufixo).
 
+Na criação, o Render pede o valor da `GROQ_API_KEY` (a chave da IA, que não vai para o Git). Se
+deixar em branco, a API funciona com o resumo do modelo padrão.
+
 O Render gera o `JWT_SECRET` sozinho e entrega o banco em `DATABASE_URL`
 (`postgresql://usuario:senha@host/banco`); a API converte para JDBC na subida (`BancoDoRender`).
 Cada push na branch do serviço faz um deploy novo.
+
+**Blueprint criado antes do Passo 7?** O Render só pede a chave na criação: num Blueprint que já
+existe, ele ignora a `GROQ_API_KEY`. Abra o serviço → **Environment** → **Add Environment Variable**,
+crie `GROQ_API_KEY` com a chave e salve (o Render faz um deploy novo). As outras duas
+(`IA_HABILITADA` e `IA_MODELO`) chegam pelo próprio `render.yaml`.
 
 ### Para a API não dormir
 
@@ -157,7 +198,7 @@ suspende os serviços grátis até o mês seguinte.
 - **Postgres:** 1 por conta, 1 GB, e **expira 30 dias depois de criado** (mais 14 dias para fazer
   upgrade antes de ser apagado). Se a conta já tiver um Postgres grátis, o Blueprint falha.
 - **API:** 512 MB e 0,1 de CPU. O Dockerfile já ajusta a JVM (heap em 60%, coletor simples, JIT leve):
-  aqui ela ficou em ~280 MB.
+  aqui ela ficou em ~340 MB, já com o Spring AI.
 
 ### App apontando para a nuvem
 
@@ -178,6 +219,10 @@ Modelo em [`.env.example`](.env.example). Nenhuma é obrigatória no computador.
 | `JWT_SECRET`                       | Segredo do JWT em base64, 32+ bytes (`openssl rand -base64 32`). Sem ele, um aleatório por subida: o login cai quando a API reinicia |
 | `CORS_ORIGENS`                     | Origens do navegador, separadas por vírgula. Padrão: `http://localhost:8081` (Expo Web). O app no celular não usa CORS |
 | `CARREGAR_DADOS_INICIAIS`          | `false` desliga os usuários de teste. Padrão: `true`       |
+| `IA_HABILITADA`                    | `true` liga o resumo com IA. Padrão: `false` (só o modelo padrão) |
+| `GROQ_API_KEY`                     | Chave do Groq (`gsk_...`). Só na API, nunca no Git nem no app |
+| `IA_MODELO`                        | Modelo do Groq. Padrão: `openai/gpt-oss-120b`             |
+| `IA_URL`                           | Endereço da API compatível com a OpenAI. Padrão: `https://api.groq.com/openai/v1` |
 
 ---
 
@@ -193,7 +238,7 @@ src/main/java/br/com/fiap/antidoto/
 ├── model/        entidades JPA e enums
 ├── repository/   Spring Data JPA
 ├── security/     SecurityConfig (rotas públicas e protegidas, CORS), JwtService, JwtFiltro, RespostasDeSeguranca (401/403)
-├── ia/           ResumoModeloPadrao (o resumo montado por modelo de texto)
+├── ia/           ResumoIaService (o resumo pelo Groq, com tempo limite e conferência da resposta) e ResumoModeloPadrao (o modelo de texto, a reserva)
 ├── mensageria/   OcorrenciaCriadaEvento e ResumoOcorrenciaConsumer (gera o resumo depois do commit, em segundo plano)
 └── service/      regras de negócio (AuthService, UsuarioService, UnidadeService, CompatibilidadeSoroService, DistanciaService, AvistamentoService, UrgenciaService, OcorrenciaService)
 src/main/resources/
@@ -220,6 +265,7 @@ não enxerga:
 | RabbitMQ para o resumo                 | Resumo em segundo plano dentro da API (`@Async`), o modo sem fila do MVP-01    |
 | `br.com.sospeconha.api`, "SOS Peçonha" | `br.com.fiap.antidoto`, "Antídoto" (o nome do app)                             |
 | CRUD de unidades do GESTOR e `GET /api/ocorrencias/unidade/{id}` | Fora: o app não usa. As leituras públicas (`GET /api/unidades` e `/{id}`) existem |
+| Groq com `llama-3.3-70b-versatile`     | Groq com `openai/gpt-oss-120b`: o Groq desligou o Llama 3.3 70B nos planos grátis e developer em 16/08/2026 e indica este no lugar ([deprecations](https://console.groq.com/docs/deprecations)) |
 
 ---
 
