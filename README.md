@@ -21,8 +21,11 @@ API REST que o app **Antídoto** consome (Global Solution 2026/2 · FIAP · Citi
 | 3     | Unidades próximas com soro compatível (RN-S) e 12 unidades fictícias                       | ✅       |
 | 4     | CRUD de avistamentos (só o dono)                                                           | ✅       |
 | 5     | Ocorrências: urgência (RN-U) e resumo de pré-atendimento em segundo plano                  | ✅       |
-| 6     | Deploy no Render (Postgres) e o app apontando para a API                                   | 🔜 arquivos prontos; falta criar no Render |
-| 7     | (Opcional) Resumo com IA de verdade (Spring AI + Groq), com o modelo padrão de reserva     | ✅ falta a chave no Render |
+| 6     | Deploy no Render (Postgres) e o app apontando para a API                                   | ✅ API no ar; falta o app apontar para ela |
+| 7     | (Opcional) Resumo com IA de verdade (Spring AI + Groq), com o modelo padrão de reserva     | ✅       |
+| 7.1   | Ajustes da IA depois do teste no Render: aquecimento, instruções mais rígidas e conferência | ✅       |
+
+**No ar:** https://api-antidoto-integration.onrender.com (Swagger em `/swagger-ui.html`).
 
 ---
 
@@ -67,9 +70,9 @@ telefone ou coordenadas (RN-G6).
 
 - **Com a IA ligada** (`IA_HABILITADA=true` e a `GROQ_API_KEY`): o texto vem do Groq e o resumo fica
   `PRONTO`.
-- **Sem a IA, ou se ela falhar** (erro, chave inválida, mais de 6 s, resposta vazia, longa demais ou
-  falando de dose ou remédio): vale o modelo de texto, com o status `MODELO_PADRAO`. A ocorrência
-  nunca fica sem resumo.
+- **Sem a IA, ou se ela falhar** (erro, chave inválida, mais de 6 s, ou uma resposta que não passa
+  na conferência): vale o modelo de texto, com o status `MODELO_PADRAO`. A ocorrência nunca fica sem
+  resumo.
 
 O modelo de texto:
 
@@ -86,9 +89,20 @@ Destino: Hospital Exemplo Centro
 
 A API fala com o Groq pelo **Spring AI**, com o cliente da OpenAI apontando para
 `https://api.groq.com/openai/v1` (o Groq aceita a mesma API). O modelo é o `openai/gpt-oss-120b`,
-com raciocínio baixo, temperatura 0,2 e até 800 tokens; as instruções (em
-`ResumoIaService.INSTRUCOES`) pedem no máximo 6 linhas, só com os dados enviados, e proíbem sugerir
-tratamento, remédio ou dose. A chave **só existe na API** (variável de ambiente): o app nunca a vê.
+com raciocínio baixo, temperatura 0,2 e até 800 tokens. As instruções (em
+`ResumoIaService.INSTRUCOES`) são as do MVP-01 com regras a mais: usar só os dados enviados, copiar a
+urgência, os motivos e o destino como vieram, chamar de alerta só o sintoma marcado com `(ALERTA)`,
+uma informação por linha e nunca sugerir tratamento, remédio ou dose. A chave **só existe na API**
+(variável de ambiente): o app nunca a vê.
+
+**Conferência da resposta** (`ResumoIaService.validar`): a resposta é descartada se vier vazia, com
+mais de 1.200 caracteres, falando de dose, mg, ml, ampola ou medicamento, com outro nível de urgência
+(a IA nunca decide a urgência), falando em alerta sem sintoma de alerta ou com um campo vazio
+(`Destino:` sem nada).
+
+**Aquecimento:** no plano grátis do Render (0,1 de CPU), a primeira chamada depois da subida carrega
+o cliente HTTP e passava dos 6 s. Por isso, logo depois de subir, a API faz uma chamada mínima ao Groq
+(log `IA pronta (aquecimento) em ... ms`) e a primeira ocorrência já encontra tudo pronto.
 
 1. Crie uma conta grátis no [GroqCloud](https://console.groq.com) e uma chave em
    [API Keys](https://console.groq.com/keys) (começa com `gsk_`). Copie e guarde num lugar seguro;
@@ -102,8 +116,8 @@ tratamento, remédio ou dose. A chave **só existe na API** (variável de ambien
    No Windows (PowerShell): `$env:GROQ_API_KEY="gsk_..."; $env:IA_HABILITADA="true"; .\gradlew.bat bootRun`.
 3. Registre uma ocorrência (no app ou no Swagger) e veja o log: `Resumo da ocorrência N: PRONTO em ... ms`.
    Com `MODELO_PADRAO`, a linha de cima diz o motivo: `IA indisponível ...` (erro, chave inválida ou
-   tempo esgotado) ou `resposta descartada` (vazia, longa demais ou falando de dose). O log nunca
-   mostra os dados da triagem nem o texto do resumo.
+   tempo esgotado) ou `resposta descartada` (não passou na conferência). O log nunca mostra os dados
+   da triagem nem o texto do resumo. Busque por `ResumoIaService` (sem acento) no log do Render.
 
 No Render, a chave vai em **Environment** (veja o deploy). Os limites do plano grátis ficam em
 [console.groq.com/settings/limits](https://console.groq.com/settings/limits).
@@ -181,6 +195,22 @@ Cada push na branch do serviço faz um deploy novo.
 existe, ele ignora a `GROQ_API_KEY`. Abra o serviço → **Environment** → **Add Environment Variable**,
 crie `GROQ_API_KEY` com a chave e salve (o Render faz um deploy novo). As outras duas
 (`IA_HABILITADA` e `IA_MODELO`) chegam pelo próprio `render.yaml`.
+
+### Como está no ar hoje (criado à mão)
+
+A API no ar foi criada sem o Blueprint, com o mesmo resultado:
+
+1. **New → Postgres** (Free, Virginia) e copiar a **Internal Database URL**.
+2. **New → Web Service** → o repositório → Language **Docker**, a **mesma região** do banco, Free.
+   Variáveis: `DATABASE_URL` (a URL interna inteira), `JWT_SECRET` (base64 de 32 bytes),
+   `CORS_ORIGENS`, `CARREGAR_DADOS_INICIAIS`, `GROQ_API_KEY`, `IA_HABILITADA=true` e `IA_MODELO`.
+   Em Advanced, **Health Check Path** `/actuator/health`.
+
+**Repositório na organização:** o Render só enxerga um repositório de organização se o app dele no
+GitHub estiver instalado nela (um dono da organização aprova). Enquanto isso, o serviço usa um
+**fork pessoal**: cada mudança entra por PR na organização e depois o fork é sincronizado
+(**Sync fork**, ou um PR da organização para o fork); o Render faz o deploy sozinho a cada commit
+no fork.
 
 ### Para a API não dormir
 
@@ -265,6 +295,7 @@ não enxerga:
 | RabbitMQ para o resumo                 | Resumo em segundo plano dentro da API (`@Async`), o modo sem fila do MVP-01    |
 | `br.com.sospeconha.api`, "SOS Peçonha" | `br.com.fiap.antidoto`, "Antídoto" (o nome do app)                             |
 | CRUD de unidades do GESTOR e `GET /api/ocorrencias/unidade/{id}` | Fora: o app não usa. As leituras públicas (`GET /api/unidades` e `/{id}`) existem |
+| Prompt do MVP-01 §8, `max-tokens 300`  | O mesmo prompt com regras a mais (copiar urgência, motivos e destino; alerta só com `(ALERTA)`; sem numeração), porque nos testes a IA chamou dor e inchaço de alerta e inventou motivo. Até 800 tokens, porque o `gpt-oss-120b` gasta tokens raciocinando. A conferência também descarta outro nível de urgência, alerta inventado e campo vazio |
 | Groq com `llama-3.3-70b-versatile`     | Groq com `openai/gpt-oss-120b`: o Groq desligou o Llama 3.3 70B nos planos grátis e developer em 16/08/2026 e indica este no lugar ([deprecations](https://console.groq.com/docs/deprecations)) |
 
 ---

@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -39,14 +40,17 @@ class ResumoIaIntegracaoTest {
     enum Modo { NORMAL, COM_DOSE, LENTO, ERRO }
 
     private static final String RESUMO_DA_IA = """
-            Animal: escorpião, criança.
-            Picada há 25 min; vômitos repetidos (sinal de alerta).
-            Urgência: EMERGÊNCIA (sinal de alerta; escorpião em criança).
-            Destino: Hospital Exemplo Centro.""";
+            Animal: Escorpião
+            Picada: 22:15 (há 25 min)
+            Faixa etária: criança
+            Sintomas: Vômitos repetidos (ALERTA)
+            Urgência: EMERGÊNCIA — Sinal de alerta; Escorpião em criança; Criança ou idoso
+            Destino: não escolhido""";
 
     private static volatile Modo modo = Modo.NORMAL;
     private static volatile String ultimoCaminho;
     private static volatile String ultimoCorpo;
+    private static final AtomicInteger AQUECIMENTOS = new AtomicInteger();
 
     private static final HttpServer GROQ_FALSO = iniciarGroqFalso();
 
@@ -78,13 +82,21 @@ class ResumoIaIntegracaoTest {
         try {
             HttpServer servidor = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
             servidor.createContext("/", troca -> {
-                ultimoCaminho = troca.getRequestURI().getPath();
-                ultimoCorpo = new String(troca.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-                if (modo == Modo.LENTO) {
+                String corpoRecebido = new String(troca.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                // O aquecimento chega uma vez, logo depois da subida: responde "ok", seja qual for o modo
+                boolean aquecimento = corpoRecebido.contains(ResumoIaService.AQUECIMENTO);
+                if (aquecimento) {
+                    AQUECIMENTOS.incrementAndGet();
+                } else {
+                    ultimoCaminho = troca.getRequestURI().getPath();
+                    ultimoCorpo = corpoRecebido;
+                }
+                if (!aquecimento && modo == Modo.LENTO) {
                     dormir(Duration.ofSeconds(4));
                 }
-                int status = modo == Modo.ERRO ? 500 : 200;
-                String conteudo = modo == Modo.COM_DOSE ? "Aplicar uma dose de soro antiescorpiônico." : RESUMO_DA_IA;
+                int status = !aquecimento && modo == Modo.ERRO ? 500 : 200;
+                String conteudo = aquecimento ? "ok"
+                        : modo == Modo.COM_DOSE ? "Aplicar uma dose de soro antiescorpiônico." : RESUMO_DA_IA;
                 byte[] corpo = (status == 200 ? respostaDeChat(conteudo) : "{\"error\":{\"message\":\"falhou\"}}")
                         .getBytes(StandardCharsets.UTF_8);
                 troca.getResponseHeaders().add("Content-Type", "application/json");
@@ -160,6 +172,14 @@ class ResumoIaIntegracaoTest {
                 .contains("Vômitos repetidos (ALERTA)")
                 // RN-G6: nada que identifique a pessoa nem a localização
                 .doesNotContain("Pessoa de Teste", "@antidoto.dev", "-23.5614", "-46.6559");
+    }
+
+    @Test
+    void depoisDaSubidaAIaEAquecidaComUmaChamadaMinima() throws Exception {
+        for (int tentativa = 0; tentativa < 50 && AQUECIMENTOS.get() == 0; tentativa++) {
+            Thread.sleep(100);
+        }
+        assertThat(AQUECIMENTOS.get()).isEqualTo(1);
     }
 
     @Test
