@@ -21,9 +21,10 @@ API REST que o app **Antídoto** consome (Global Solution 2026/2 · FIAP · Citi
 | 3     | Unidades próximas com soro compatível (RN-S) e 12 unidades fictícias                       | ✅       |
 | 4     | CRUD de avistamentos (só o dono)                                                           | ✅       |
 | 5     | Ocorrências: urgência (RN-U) e resumo de pré-atendimento em segundo plano                  | ✅       |
-| 6     | Deploy no Render (Postgres) e o app apontando para a API                                   | ✅ API no ar; falta o app apontar para ela |
+| 6     | Deploy no Render (Postgres) e o app apontando para a API                                   | ✅       |
 | 7     | (Opcional) Resumo com IA de verdade (Spring AI + Groq), com o modelo padrão de reserva     | ✅       |
 | 7.1   | Ajustes da IA depois do teste no Render: aquecimento, instruções mais rígidas e conferência | ✅       |
+| 8     | Primeiros socorros pela API e atualizar a ocorrência (o CRUD completo no app)               | ✅       |
 
 **No ar:** https://api-antidoto-integration.onrender.com (Swagger em `/swagger-ui.html`).
 
@@ -150,7 +151,9 @@ use a localização da Avenida Paulista (-23.5614, -46.6559).
 | `POST /api/ocorrencias`      | logado  | Registra a picada: calcula a urgência (RN-U) e responde 201 com o resumo `PENDENTE`; hora da picada entre agora e 72 h atrás (RN-G4) |
 | `GET /api/ocorrencias/minhas` | logado | Histórico, mais recentes primeiro, paginado  |
 | `GET /api/ocorrencias/{id}`  | logado  | Detalhe; o app consulta a cada 3 s até o resumo sair do `PENDENTE` |
+| `PUT /api/ocorrencias/{id}`  | logado  | Atualiza a triagem (ex.: sintomas novos ou outra unidade): mesmas regras do registro, urgência recalculada com a hora de agora e resumo novo (`PENDENTE`); com o resumo anterior ainda `PENDENTE`, 409 |
 | `DELETE /api/ocorrencias/{id}` | logado | Remove do histórico (204)                   |
+| `GET /api/conteudo/primeiros-socorros/{tipoAnimal}` | público | O que fazer, o que não fazer e os cuidados do animal (MVP-02 §6) |
 
 **App no celular apontando para esta API:** no `.env` do app,
 `EXPO_PUBLIC_API_URL=http://<ip do computador>:8080` (o mesmo Wi-Fi), e `npx expo start --clear`.
@@ -269,8 +272,8 @@ src/main/java/br/com/fiap/antidoto/
 ├── repository/   Spring Data JPA
 ├── security/     SecurityConfig (rotas públicas e protegidas, CORS), JwtService, JwtFiltro, RespostasDeSeguranca (401/403)
 ├── ia/           ResumoIaService (o resumo pelo Groq, com tempo limite e conferência da resposta) e ResumoModeloPadrao (o modelo de texto, a reserva)
-├── mensageria/   OcorrenciaCriadaEvento e ResumoOcorrenciaConsumer (gera o resumo depois do commit, em segundo plano)
-└── service/      regras de negócio (AuthService, UsuarioService, UnidadeService, CompatibilidadeSoroService, DistanciaService, AvistamentoService, UrgenciaService, OcorrenciaService)
+├── mensageria/   OcorrenciaCriadaEvento, OcorrenciaAtualizadaEvento e ResumoOcorrenciaConsumer (gera o resumo depois do commit, em segundo plano)
+└── service/      regras de negócio (AuthService, UsuarioService, UnidadeService, CompatibilidadeSoroService, DistanciaService, AvistamentoService, UrgenciaService, OcorrenciaService, ConteudoService)
 src/main/resources/
 ├── application.properties
 └── db/migration/ V1__criar_tabelas.sql (Flyway, SQL do PostgreSQL)
@@ -296,6 +299,8 @@ não enxerga:
 | `br.com.sospeconha.api`, "SOS Peçonha" | `br.com.fiap.antidoto`, "Antídoto" (o nome do app)                             |
 | CRUD de unidades do GESTOR e `GET /api/ocorrencias/unidade/{id}` | Fora: o app não usa. As leituras públicas (`GET /api/unidades` e `/{id}`) existem |
 | Prompt do MVP-01 §8, `max-tokens 300`  | O mesmo prompt com regras a mais (copiar urgência, motivos e destino; alerta só com `(ALERTA)`; sem numeração), porque nos testes a IA chamou dor e inchaço de alerta e inventou motivo. Até 800 tokens, porque o `gpt-oss-120b` gasta tokens raciocinando. A conferência também descarta outro nível de urgência, alerta inventado e campo vazio |
+| Primeiros socorros só no app (MVP-02 §6) | `GET /api/conteudo/primeiros-socorros/{tipoAnimal}` (público), com o mesmo texto: o app mostra só dado que vem da API |
+| Ocorrência sem edição                  | `PUT /api/ocorrencias/{id}`: a pessoa atualiza a triagem (sintomas, unidade) e o resumo é refeito; a ocorrência ganha o CRUD completo |
 | Groq com `llama-3.3-70b-versatile`     | Groq com `openai/gpt-oss-120b`: o Groq desligou o Llama 3.3 70B nos planos grátis e developer em 16/08/2026 e indica este no lugar ([deprecations](https://console.groq.com/docs/deprecations)) |
 
 ---

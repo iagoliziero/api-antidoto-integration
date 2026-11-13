@@ -4,9 +4,11 @@ import br.com.fiap.antidoto.dto.PaginaResponse;
 import br.com.fiap.antidoto.dto.ocorrencia.OcorrenciaRequest;
 import br.com.fiap.antidoto.dto.ocorrencia.OcorrenciaResponse;
 import br.com.fiap.antidoto.dto.ocorrencia.ResultadoUrgencia;
+import br.com.fiap.antidoto.exception.ConflitoException;
 import br.com.fiap.antidoto.exception.RecursoNaoEncontradoException;
 import br.com.fiap.antidoto.exception.RegraDeNegocioException;
 import br.com.fiap.antidoto.mapper.OcorrenciaMapper;
+import br.com.fiap.antidoto.mensageria.OcorrenciaAtualizadaEvento;
 import br.com.fiap.antidoto.mensageria.OcorrenciaCriadaEvento;
 import br.com.fiap.antidoto.model.Ocorrencia;
 import br.com.fiap.antidoto.model.Sintoma;
@@ -28,7 +30,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.EnumSet;
 import java.util.Set;
 
-/** Ocorrências (MVP-01 §6.3): registrar, histórico, detalhe e remover. Só do dono. */
+/** Ocorrências (MVP-01 §6.3): registrar, histórico, detalhe, atualizar e remover. Só do dono. */
 @Service
 public class OcorrenciaService {
 
@@ -70,30 +72,33 @@ public class OcorrenciaService {
     @Transactional
     public OcorrenciaResponse criar(Long idUsuario, OcorrenciaRequest requisicao) {
         Instant agora = Instant.now(relogio).truncatedTo(ChronoUnit.MILLIS);
-        conferirHoraPicada(requisicao.horaPicada(), agora);
-        UnidadeSaude unidade = unidadeDeDestino(requisicao.unidadeId());
-
-        Set<Sintoma> sintomas = EnumSet.noneOf(Sintoma.class);
-        sintomas.addAll(requisicao.sintomas());
-        ResultadoUrgencia resultado = urgenciaService.calcular(
-                requisicao.tipoAnimal(), requisicao.faixaEtaria(), sintomas, requisicao.horaPicada(), agora);
 
         Ocorrencia ocorrencia = new Ocorrencia();
         ocorrencia.setUsuario(usuarioRepository.getReferenceById(idUsuario));
-        ocorrencia.setUnidade(unidade);
-        ocorrencia.setTipoAnimal(requisicao.tipoAnimal());
-        ocorrencia.setFaixaEtaria(requisicao.faixaEtaria());
-        ocorrencia.setSintomas(sintomas);
-        ocorrencia.setHoraPicada(requisicao.horaPicada().truncatedTo(ChronoUnit.MILLIS));
-        ocorrencia.setLatitude(requisicao.latitude());
-        ocorrencia.setLongitude(requisicao.longitude());
-        ocorrencia.setUrgencia(resultado.urgencia());
-        ocorrencia.setMotivos(OcorrenciaMapper.motivosParaColuna(resultado.motivos()));
-        ocorrencia.setStatusResumo(StatusResumo.PENDENTE);
+        preencherTriagem(ocorrencia, requisicao, agora);
         ocorrencia.setCriadoEm(agora);
         ocorrenciaRepository.save(ocorrencia);
 
         publicadorDeEventos.publishEvent(new OcorrenciaCriadaEvento(ocorrencia.getId()));
+        return ocorrenciaMapper.paraResponse(ocorrencia);
+    }
+
+    /**
+     * Atualiza a triagem (ex.: sintomas novos ou outra unidade de destino): confere de
+     * novo a RN-G4 e a unidade, recalcula a urgência (RN-U) com a hora de agora e pede
+     * um resumo novo (PENDENTE, gerado depois do commit). Enquanto o resumo anterior
+     * ainda está sendo gerado, recusa (409): o resumo antigo poderia ficar por cima do novo.
+     */
+    @Transactional
+    public OcorrenciaResponse atualizar(Long idUsuario, Long id, OcorrenciaRequest requisicao) {
+        Ocorrencia ocorrencia = carregarDoDono(idUsuario, id);
+        if (ocorrencia.getStatusResumo() == StatusResumo.PENDENTE) {
+            throw new ConflitoException("O resumo ainda está sendo gerado. Tente de novo em alguns segundos.");
+        }
+        preencherTriagem(ocorrencia, requisicao, Instant.now(relogio).truncatedTo(ChronoUnit.MILLIS));
+        ocorrencia.setResumo(null);
+
+        publicadorDeEventos.publishEvent(new OcorrenciaAtualizadaEvento(ocorrencia.getId()));
         return ocorrenciaMapper.paraResponse(ocorrencia);
     }
 
@@ -115,6 +120,28 @@ public class OcorrenciaService {
     @Transactional
     public void excluir(Long idUsuario, Long id) {
         ocorrenciaRepository.delete(carregarDoDono(idUsuario, id));
+    }
+
+    /** O que o registro e a atualização têm em comum: as regras, a urgência e os campos da triagem. */
+    private void preencherTriagem(Ocorrencia ocorrencia, OcorrenciaRequest requisicao, Instant agora) {
+        conferirHoraPicada(requisicao.horaPicada(), agora);
+        UnidadeSaude unidade = unidadeDeDestino(requisicao.unidadeId());
+
+        Set<Sintoma> sintomas = EnumSet.noneOf(Sintoma.class);
+        sintomas.addAll(requisicao.sintomas());
+        ResultadoUrgencia resultado = urgenciaService.calcular(
+                requisicao.tipoAnimal(), requisicao.faixaEtaria(), sintomas, requisicao.horaPicada(), agora);
+
+        ocorrencia.setUnidade(unidade);
+        ocorrencia.setTipoAnimal(requisicao.tipoAnimal());
+        ocorrencia.setFaixaEtaria(requisicao.faixaEtaria());
+        ocorrencia.setSintomas(sintomas);
+        ocorrencia.setHoraPicada(requisicao.horaPicada().truncatedTo(ChronoUnit.MILLIS));
+        ocorrencia.setLatitude(requisicao.latitude());
+        ocorrencia.setLongitude(requisicao.longitude());
+        ocorrencia.setUrgencia(resultado.urgencia());
+        ocorrencia.setMotivos(OcorrenciaMapper.motivosParaColuna(resultado.motivos()));
+        ocorrencia.setStatusResumo(StatusResumo.PENDENTE);
     }
 
     private Ocorrencia carregarDoDono(Long idUsuario, Long id) {

@@ -22,6 +22,7 @@ tags:
   - name: Unidades
   - name: Ocorrencias
   - name: Avistamentos
+  - name: Conteudo
 
 security:
   - bearerAuth: []
@@ -272,6 +273,28 @@ paths:
               schema: { $ref: '#/components/schemas/Ocorrencia' }
         '401': { $ref: '#/components/responses/Erro401' }
         '404': { $ref: '#/components/responses/Erro404' }
+    put:
+      tags: [Ocorrencias]
+      summary: Atualiza a triagem (ex. sintomas novos ou outra unidade) — somente o dono
+      description: >
+        Mesmas regras do registro (RN-G4 e unidade ativa). Recalcula a urgência (RN-U) com a hora
+        da atualização, volta o resumo para PENDENTE e gera um novo em segundo plano. Com o resumo
+        anterior ainda PENDENTE, responde 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OcorrenciaRequest' }
+      responses:
+        '200':
+          description: OK (statusResumo PENDENTE)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ocorrencia' }
+        '400': { $ref: '#/components/responses/Erro400' }
+        '401': { $ref: '#/components/responses/Erro401' }
+        '404': { $ref: '#/components/responses/Erro404' }
+        '409': { $ref: '#/components/responses/Erro409' }
     delete:
       tags: [Ocorrencias]
       summary: Remove do histórico (somente o dono)
@@ -351,6 +374,24 @@ paths:
         '204': { description: Excluído }
         '404': { $ref: '#/components/responses/Erro404' }
 
+  /api/conteudo/primeiros-socorros/{tipoAnimal}:
+    get:
+      tags: [Conteudo]
+      summary: Primeiros socorros do animal (público) — MVP-02 §6
+      security: []
+      parameters:
+        - in: path
+          name: tipoAnimal
+          required: true
+          schema: { $ref: '#/components/schemas/TipoAnimal' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrimeirosSocorros' }
+        '400': { $ref: '#/components/responses/Erro400' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -390,7 +431,7 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Erro' }
     Erro409:
-      description: 'Conflito (ex.: e-mail já cadastrado)'
+      description: 'Conflito (ex.: e-mail já cadastrado; resumo da ocorrência ainda sendo gerado)'
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Erro' }
@@ -618,3 +659,22 @@ components:
             conteudo:
               type: array
               items: { $ref: '#/components/schemas/Avistamento' }
+
+    PrimeirosSocorros:
+      type: object
+      required: [tipoAnimal, faca, naoFaca, atencao]
+      properties:
+        tipoAnimal: { $ref: '#/components/schemas/TipoAnimal' }
+        faca:
+          type: array
+          items: { type: string }
+          example: ['Afaste-se do animal.', 'Lave o local com água e sabão.']
+        naoFaca:
+          type: array
+          items: { type: string }
+          example: ['Amarrar o local ou fazer torniquete.', 'Sugar o veneno.']
+        atencao:
+          type: array
+          description: os cuidados daquele animal
+          items: { type: string }
+          example: ['Compressa morna pode aliviar a dor no caminho.']

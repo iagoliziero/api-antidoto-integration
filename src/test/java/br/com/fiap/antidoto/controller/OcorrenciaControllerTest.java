@@ -1,6 +1,8 @@
 package br.com.fiap.antidoto.controller;
 
 import br.com.fiap.antidoto.ApoioDeTeste;
+import br.com.fiap.antidoto.model.StatusResumo;
+import br.com.fiap.antidoto.repository.OcorrenciaRepository;
 import br.com.fiap.antidoto.repository.UnidadeSaudeRepository;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
@@ -22,10 +24,11 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** Ocorrências (MVP-01 §6.3): registrar, o resumo em segundo plano, histórico e remover. */
+/** Ocorrências (MVP-01 §6.3): registrar, o resumo em segundo plano, histórico, atualizar e remover. */
 @SpringBootTest
 @AutoConfigureMockMvc
 class OcorrenciaControllerTest {
@@ -35,6 +38,9 @@ class OcorrenciaControllerTest {
 
     @Autowired
     private UnidadeSaudeRepository unidadeRepository;
+
+    @Autowired
+    private OcorrenciaRepository ocorrenciaRepository;
 
     private static String corpo(String animal, String faixa, String sintomas, Instant horaPicada, Long unidadeId) {
         return """
@@ -49,6 +55,11 @@ class OcorrenciaControllerTest {
 
     private ResultActions registrar(String token, String json) throws Exception {
         return mvc.perform(post("/api/ocorrencias").header(HttpHeaders.AUTHORIZATION, token)
+                .contentType(MediaType.APPLICATION_JSON).content(json));
+    }
+
+    private ResultActions atualizar(String token, long id, String json) throws Exception {
+        return mvc.perform(put("/api/ocorrencias/{id}", id).header(HttpHeaders.AUTHORIZATION, token)
                 .contentType(MediaType.APPLICATION_JSON).content(json));
     }
 
@@ -183,6 +194,69 @@ class OcorrenciaControllerTest {
                 .andExpect(status().isNotFound());
         mvc.perform(get("/api/ocorrencias/minhas").header(HttpHeaders.AUTHORIZATION, dona))
                 .andExpect(jsonPath("$.totalElementos").value(1));
+    }
+
+    @Test
+    void atualizarRecalculaAUrgenciaEGeraUmResumoNovo() throws Exception {
+        String token = ApoioDeTeste.cadastrarEEntrar(mvc);
+        long hospital = unidadeRepository.findByNome("Hospital Exemplo Centro").orElseThrow().getId();
+        Instant horaPicada = haMinutos(40);
+        String criada = registrar(token, corpo("SERPENTE", "ADULTO", "\"DOR_LOCAL\"", horaPicada, null))
+                .andExpect(jsonPath("$.urgencia").value("ALTA"))
+                .andReturn().getResponse().getContentAsString();
+        long id = ((Number) JsonPath.read(criada, "$.id")).longValue();
+        String criadoEm = JsonPath.read(criada, "$.criadoEm");
+        esperarResumo(token, id);
+
+        // Apareceu sangramento e a pessoa escolheu a unidade: a urgência sobe e o resumo é refeito
+        atualizar(token, id, corpo("SERPENTE", "ADULTO", "\"DOR_LOCAL\",\"SANGRAMENTO\"", horaPicada, hospital))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id))
+                .andExpect(jsonPath("$.sintomas", contains("DOR_LOCAL", "SANGRAMENTO")))
+                .andExpect(jsonPath("$.urgencia").value("EMERGENCIA"))
+                .andExpect(jsonPath("$.motivos", contains("Sinal de alerta", "Animal com risco de agravamento")))
+                .andExpect(jsonPath("$.ligar192").value(true))
+                .andExpect(jsonPath("$.unidadeNome").value("Hospital Exemplo Centro"))
+                .andExpect(jsonPath("$.statusResumo").value("PENDENTE"))
+                .andExpect(jsonPath("$.resumo").isEmpty())
+                .andExpect(jsonPath("$.criadoEm").value(criadoEm));
+
+        String refeita = esperarResumo(token, id);
+        assertThat((String) JsonPath.read(refeita, "$.resumo"))
+                .contains("Sangramento ou urina escura (ALERTA)")
+                .contains("Urgência: EMERGÊNCIA")
+                .contains("Destino: Hospital Exemplo Centro");
+    }
+
+    @Test
+    void atualizarSoODonoComAsMesmasRegrasESemResumoPendente() throws Exception {
+        String dona = ApoioDeTeste.cadastrarEEntrar(mvc);
+        String outra = ApoioDeTeste.cadastrarEEntrar(mvc);
+        long id = registrarERetornarId(dona);
+        esperarResumo(dona, id);
+        String valido = corpo("ABELHA", "ADULTO", "", haMinutos(5), null);
+
+        atualizar(outra, id, valido)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.mensagem").value("Ocorrência não encontrada."));
+        mvc.perform(put("/api/ocorrencias/{id}", id).contentType(MediaType.APPLICATION_JSON).content(valido))
+                .andExpect(status().isUnauthorized());
+        atualizar(dona, id, corpo("ABELHA", "ADULTO", "", haMinutos(73 * 60), null))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.campos[0].campo").value("horaPicada"));
+        atualizar(dona, id, corpo("ABELHA", "ADULTO", "", haMinutos(5), 999999L))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.mensagem").value("Unidade não encontrada."));
+        atualizar(dona, id, "{\"sintomas\":[]}")
+                .andExpect(status().isBadRequest());
+
+        // Com o resumo anterior ainda sendo gerado, o novo poderia ficar por baixo: 409
+        var ocorrencia = ocorrenciaRepository.findById(id).orElseThrow();
+        ocorrencia.setStatusResumo(StatusResumo.PENDENTE);
+        ocorrenciaRepository.save(ocorrencia);
+        atualizar(dona, id, valido)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.mensagem").value("O resumo ainda está sendo gerado. Tente de novo em alguns segundos."));
     }
 
     @Test

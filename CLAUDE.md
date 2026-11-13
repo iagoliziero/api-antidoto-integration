@@ -34,16 +34,16 @@ Biblioteca nova: só combinando antes.
 br.com.fiap.antidoto
 ├── AntidotoApiApplication.java
 ├── config/       RelogioConfig (bean Clock), OpenApiConfig (Bearer no Swagger), AssincronoConfig (@EnableAsync), DadosIniciais (usuários, as 12 unidades fictícias, 3 avistamentos e 1 ocorrência do cidadão), BancoDoRender (DATABASE_URL → JDBC, em META-INF/spring.factories)
-├── controller/   AuthController, UsuarioController, UnidadeController, AvistamentoController, OcorrenciaController
+├── controller/   AuthController, UsuarioController, UnidadeController, AvistamentoController, OcorrenciaController, ConteudoController
 ├── dto/          PaginaResponse; erro/ (ErroResponse, CampoErroResponse); usuario/ (CadastroRequest, LoginRequest, AtualizarUsuarioRequest, UsuarioResponse, AuthResponse); unidade/ (UnidadeProximaResponse, UnidadeResponse); avistamento/ (AvistamentoRequest, AvistamentoResponse); ocorrencia/ (OcorrenciaRequest, OcorrenciaResponse, ResultadoUrgencia)
 ├── ia/           ResumoIaService (Spring AI → Groq, com tempo limite e conferência da resposta), ResumoModeloPadrao (modelo de texto e os dadosDaTriagem que vão para a IA)
-├── mensageria/   OcorrenciaCriadaEvento, ResumoOcorrenciaConsumer (@Async depois do commit; sem RabbitMQ)
+├── mensageria/   OcorrenciaCriadaEvento, OcorrenciaAtualizadaEvento, ResumoOcorrenciaConsumer (@Async depois do commit; sem RabbitMQ)
 ├── exception/    TratadorGlobalDeErros, RecursoNaoEncontradoException, RegraDeNegocioException, ConflitoException, CredenciaisInvalidasException
 ├── mapper/       UsuarioMapper, UnidadeMapper, AvistamentoMapper, OcorrenciaMapper (entidade → DTO; avisos RN-G2/RN-G7)
 ├── model/        Usuario, UnidadeSaude, Ocorrencia, Avistamento + enums (rótulos iguais aos do app; Urgencia tem maior()/proxima(); Sintoma tem texto e alerta)
 ├── repository/   interfaces JpaRepository
 ├── security/     SecurityConfig, JwtService, JwtFiltro, RespostasDeSeguranca, UsuarioAutenticado
-└── service/      AuthService, UsuarioService, UnidadeService, CompatibilidadeSoroService (RN-S), DistanciaService (Haversine), AvistamentoService, UrgenciaService (RN-U), OcorrenciaService
+└── service/      AuthService, UsuarioService, UnidadeService, CompatibilidadeSoroService (RN-S), DistanciaService (Haversine), AvistamentoService, UrgenciaService (RN-U), OcorrenciaService, ConteudoService (primeiros socorros, MVP-02 §6)
 ```
 
 ---
@@ -87,7 +87,7 @@ Todo erro sai no formato do contrato, montado pelo `TratadorGlobalDeErros`:
 ## 5. Segurança (MVP-01 §5)
 
 - Stateless, CSRF desligado, sem login por formulário. O `JwtFiltro` lê o `Bearer`, confere o token e **confere no banco** que o usuário ainda existe; o perfil vira o papel (`ROLE_CIDADAO`, `ROLE_GESTOR`).
-- **Públicas:** `POST /api/auth/**`, `GET /api/unidades`, `/api/unidades/proximas`, `/api/unidades/{id}` (o SOS funciona sem login, RN-G1), `/actuator/health`, Swagger. **O resto exige login.**
+- **Públicas:** `POST /api/auth/**`, `GET /api/unidades`, `/api/unidades/proximas`, `/api/unidades/{id}`, `/api/conteudo/primeiros-socorros/{tipoAnimal}` (o SOS funciona sem login, RN-G1), `/actuator/health`, Swagger. **O resto exige login.**
 - Token inválido ou vencido **não barra** rota pública: o app logado com o token vencido continua vendo as unidades no SOS.
 - 401 e 403 saem no formato do contrato (`RespostasDeSeguranca`): sem token, "Faça login para continuar."; com token ruim, "Sessão expirada ou inválida. Entre novamente."
 - Login errado: 401 "E-mail ou senha incorretos", igual para e-mail inexistente e senha errada.
@@ -115,6 +115,7 @@ Todo erro sai no formato do contrato, montado pelo `TratadorGlobalDeErros`:
 
 - **RN-U:** `UrgenciaService` é a cópia exata do `utils/urgencia.ts` do app (mesmos motivos, mesma ordem, os mesmos 10 casos em `UrgenciaServiceTest`). Mudou um? Muda o outro, combinando antes. A IA **nunca** decide a urgência.
 - **RN-G4:** hora da picada entre agora (+5 min) e 72 h atrás; fora disso, `RegraDeNegocioException("horaPicada", ...)`. Unidade de destino inexistente ou desativada: 404.
+- **Atualizar (`PUT /api/ocorrencias/{id}`):** mesmo corpo e mesmas regras do registro (`preencherTriagem`), urgência recalculada com a hora de agora, `criadoEm` não muda, resumo volta a `PENDENTE` e sai `OcorrenciaAtualizadaEvento`. Com o resumo anterior ainda `PENDENTE`, 409: o consumer antigo poderia gravar o resumo velho por cima.
 - **Fluxo do resumo:** o `POST` salva com `PENDENTE` e publica `OcorrenciaCriadaEvento`; o `ResumoOcorrenciaConsumer` roda **depois do commit**, em outra thread (`@Async` + `@TransactionalEventListener(AFTER_COMMIT)` + `REQUIRES_NEW`), e é idempotente (só mexe se ainda estiver `PENDENTE`). Sem RabbitMQ: é o modo `@Async` do MVP-01 §9.
 - **Resumo:** com `antidoto.ia.habilitada=true` (`IA_HABILITADA`), o consumer tenta o `ResumoIaService`: deu certo → texto da IA e `PRONTO`. Desligada ou falhou → `ResumoModeloPadrao` e `MODELO_PADRAO`. A ocorrência nunca fica sem resumo.
 - **O que vai para a IA:** só `"Dados da ocorrência:\n" + ResumoModeloPadrao.dadosDaTriagem(...)` (animal, faixa etária, hora e tempo, sintomas com ALERTA, urgência e motivos, nome da unidade). Nada de nome, e-mail, telefone ou coordenadas (RN-G6). As instruções ficam em `ResumoIaService.INSTRUCOES` (system prompt).

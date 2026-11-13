@@ -48,7 +48,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(rotas -> rotas
                         .requestMatchers(HttpMethod.POST, "/api/auth/cadastro", "/api/auth/login").permitAll()
                         .requestMatchers(HttpMethod.GET,
-                                "/api/unidades", "/api/unidades/proximas", "/api/unidades/{id}").permitAll()
+                                "/api/unidades", "/api/unidades/proximas", "/api/unidades/{id}",
+                                "/api/conteudo/primeiros-socorros/{tipoAnimal}").permitAll()
                         .requestMatchers("/actuator/health", "/swagger-ui.html", "/swagger-ui/**",
                                 "/v3/api-docs/**", "/error").permitAll()
                         .anyRequest().authenticated())

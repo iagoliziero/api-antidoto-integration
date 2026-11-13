@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -63,6 +64,15 @@ public class OcorrenciaController {
             @Parameter(hidden = true) @AuthenticationPrincipal UsuarioAutenticado usuario,
             @PathVariable Long id) {
         return ResponseEntity.ok(ocorrenciaService.buscar(usuario.id(), id));
+    }
+
+    @PutMapping("/{id}")
+    @Operation(summary = "Atualiza a triagem (ex.: sintomas novos ou outra unidade). Recalcula a urgência e gera um resumo novo (somente o dono)")
+    public ResponseEntity<OcorrenciaResponse> atualizar(
+            @Parameter(hidden = true) @AuthenticationPrincipal UsuarioAutenticado usuario,
+            @PathVariable Long id,
+            @Valid @RequestBody OcorrenciaRequest requisicao) {
+        return ResponseEntity.ok(ocorrenciaService.atualizar(usuario.id(), id, requisicao));
     }
 
     @DeleteMapping("/{id}")

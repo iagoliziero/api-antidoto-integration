@@ -21,8 +21,8 @@ import java.util.Optional;
 
 /**
  * Gera o resumo em segundo plano (MVP-01 §9, modo sem RabbitMQ): roda depois do
- * commit do POST, em outra thread, então o app recebe o 201 com PENDENTE na hora
- * e consulta até o status mudar. Com a IA ligada (IA_HABILITADA=true), tenta a IA
+ * commit do POST (e do PUT, que pede um resumo novo), em outra thread, então o app
+ * recebe a resposta com PENDENTE na hora e consulta até o status mudar. Com a IA ligada (IA_HABILITADA=true), tenta a IA
  * (PRONTO); se ela falhar ou estiver desligada, vale o modelo padrão (MODELO_PADRAO):
  * a ocorrência nunca fica sem resumo. Idempotente: se já não está PENDENTE, não faz nada.
  */
@@ -55,7 +55,18 @@ public class ResumoOcorrenciaConsumer {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void gerarResumo(OcorrenciaCriadaEvento evento) {
-        ocorrenciaRepository.findById(evento.ocorrenciaId())
+        gerarSePendente(evento.ocorrenciaId());
+    }
+
+    @Async
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void gerarResumoDeNovo(OcorrenciaAtualizadaEvento evento) {
+        gerarSePendente(evento.ocorrenciaId());
+    }
+
+    private void gerarSePendente(Long idOcorrencia) {
+        ocorrenciaRepository.findById(idOcorrencia)
                 .filter(ocorrencia -> ocorrencia.getStatusResumo() == StatusResumo.PENDENTE)
                 .ifPresent(this::preencherResumo);
     }

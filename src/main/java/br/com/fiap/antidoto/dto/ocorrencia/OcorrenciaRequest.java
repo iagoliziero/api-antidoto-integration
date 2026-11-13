@@ -11,7 +11,7 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * POST /api/ocorrencias: as respostas da triagem, as coordenadas do GPS e, se a
+ * POST /api/ocorrencias e PUT /api/ocorrencias/{id}: as respostas da triagem, as coordenadas do GPS e, se a
  * pessoa escolheu, a unidade de destino. A RN-G4 (hora da picada) é conferida no
  * service, com o relógio da API.
  */
