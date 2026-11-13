@@ -1,5 +1,6 @@
 package br.com.fiap.antidoto.controller;
 
+import br.com.fiap.antidoto.dto.usuario.AlterarSenhaRequest;
 import br.com.fiap.antidoto.dto.usuario.AtualizarUsuarioRequest;
 import br.com.fiap.antidoto.dto.usuario.UsuarioResponse;
 import br.com.fiap.antidoto.security.UsuarioAutenticado;
@@ -40,5 +41,14 @@ public class UsuarioController {
             @Parameter(hidden = true) @AuthenticationPrincipal UsuarioAutenticado usuario,
             @Valid @RequestBody AtualizarUsuarioRequest requisicao) {
         return ResponseEntity.ok(usuarioService.atualizar(usuario.id(), requisicao));
+    }
+
+    @PutMapping("/me/senha")
+    @Operation(summary = "Troca a senha (confere a senha atual). 204 sem corpo")
+    public ResponseEntity<Void> alterarSenha(
+            @Parameter(hidden = true) @AuthenticationPrincipal UsuarioAutenticado usuario,
+            @Valid @RequestBody AlterarSenhaRequest requisicao) {
+        usuarioService.alterarSenha(usuario.id(), requisicao);
+        return ResponseEntity.noContent().build();
     }
 }

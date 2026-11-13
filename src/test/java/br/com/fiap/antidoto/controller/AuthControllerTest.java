@@ -1,6 +1,7 @@
 package br.com.fiap.antidoto.controller;
 
 import br.com.fiap.antidoto.ApoioDeTeste;
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -19,7 +20,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** Cadastro, login e /api/usuarios/me de ponta a ponta (H2 + Spring Security + JWT). */
+/** Cadastro, login, /api/usuarios/me e a troca de senha de ponta a ponta (H2 + Spring Security + JWT). */
 @SpringBootTest
 @AutoConfigureMockMvc
 class AuthControllerTest {
@@ -151,6 +152,46 @@ class AuthControllerTest {
 
         mvc.perform(get("/api/usuarios/me").header(HttpHeaders.AUTHORIZATION, token))
                 .andExpect(jsonPath("$.nome").value("Pessoa Editada"));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions trocarSenha(String token, String json) throws Exception {
+        return mvc.perform(put("/api/usuarios/me/senha").header(HttpHeaders.AUTHORIZATION, token)
+                .contentType(MediaType.APPLICATION_JSON).content(json));
+    }
+
+    @Test
+    void alterarSenhaConfereAAtualEDepoisSoANovaEntra() throws Exception {
+        String email = ApoioDeTeste.emailNovo();
+        String cadastro = postar("/api/auth/cadastro", """
+                {"nome":"Pessoa de Teste","email":"%s","senha":"Teste123","telefone":null}
+                """.formatted(email))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String token = "Bearer " + JsonPath.read(cadastro, "$.token");
+
+        // Senha atual errada: 400 no campo, não 401 (o 401 faria o app encerrar a sessão)
+        trocarSenha(token, "{\"senhaAtual\":\"Errada123\",\"novaSenha\":\"NovaSenha1\"}")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.campos[0].campo").value("senhaAtual"))
+                .andExpect(jsonPath("$.campos[0].mensagem").value("Senha atual incorreta."));
+        // A nova segue a regra do cadastro e precisa ser diferente da atual
+        trocarSenha(token, "{\"senhaAtual\":\"Teste123\",\"novaSenha\":\"curta\"}")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.campos[?(@.campo == 'novaSenha')]").exists());
+        trocarSenha(token, "{\"senhaAtual\":\"Teste123\",\"novaSenha\":\"Teste123\"}")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.campos[0].mensagem").value("A nova senha precisa ser diferente da atual."));
+        mvc.perform(put("/api/usuarios/me/senha").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"senhaAtual\":\"Teste123\",\"novaSenha\":\"NovaSenha1\"}"))
+                .andExpect(status().isUnauthorized());
+
+        trocarSenha(token, "{\"senhaAtual\":\"Teste123\",\"novaSenha\":\"NovaSenha1\"}")
+                .andExpect(status().isNoContent());
+
+        postar("/api/auth/login", "{\"email\":\"%s\",\"senha\":\"Teste123\"}".formatted(email))
+                .andExpect(status().isUnauthorized());
+        postar("/api/auth/login", "{\"email\":\"%s\",\"senha\":\"NovaSenha1\"}".formatted(email))
+                .andExpect(status().isOk());
     }
 
     @Test

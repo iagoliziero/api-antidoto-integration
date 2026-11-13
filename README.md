@@ -25,6 +25,7 @@ API REST que o app **Antídoto** consome (Global Solution 2026/2 · FIAP · Citi
 | 7     | (Opcional) Resumo com IA de verdade (Spring AI + Groq), com o modelo padrão de reserva     | ✅       |
 | 7.1   | Ajustes da IA depois do teste no Render: aquecimento, instruções mais rígidas e conferência | ✅       |
 | 8     | Primeiros socorros pela API e atualizar a ocorrência (o CRUD completo no app)               | ✅       |
+| 9     | Alterar senha (logado)                                                                       | ✅       |
 
 **No ar:** https://api-antidoto-integration.onrender.com (Swagger em `/swagger-ui.html`).
 
@@ -140,6 +141,7 @@ use a localização da Avenida Paulista (-23.5614, -46.6559).
 | `POST /api/auth/login`       | público | Login (200); errado: 401 "E-mail ou senha incorretos" |
 | `GET /api/usuarios/me`       | logado  | Dados de quem está logado                    |
 | `PUT /api/usuarios/me`       | logado  | Muda só o nome e o telefone                  |
+| `PUT /api/usuarios/me/senha` | logado  | Troca a senha conferindo a atual (204). Senha atual errada: 400 no campo `senhaAtual`, não 401 |
 | `GET /api/unidades/proximas` | público | Unidades ativas com soro compatível com o animal (RN-S), da mais perto para a mais longe (`latitude`, `longitude`, `tipoAnimal`, `limite` de 1 a 10, padrão 5) |
 | `GET /api/unidades`          | público | Unidades ativas por nome, paginadas          |
 | `GET /api/unidades/{id}`     | público | Detalhe de uma unidade ativa                 |
@@ -300,6 +302,7 @@ não enxerga:
 | CRUD de unidades do GESTOR e `GET /api/ocorrencias/unidade/{id}` | Fora: o app não usa. As leituras públicas (`GET /api/unidades` e `/{id}`) existem |
 | Prompt do MVP-01 §8, `max-tokens 300`  | O mesmo prompt com regras a mais (copiar urgência, motivos e destino; alerta só com `(ALERTA)`; sem numeração), porque nos testes a IA chamou dor e inchaço de alerta e inventou motivo. Até 800 tokens, porque o `gpt-oss-120b` gasta tokens raciocinando. A conferência também descarta outro nível de urgência, alerta inventado e campo vazio |
 | Primeiros socorros só no app (MVP-02 §6) | `GET /api/conteudo/primeiros-socorros/{tipoAnimal}` (público), com o mesmo texto: o app mostra só dado que vem da API |
+| Sem troca de senha                     | `PUT /api/usuarios/me/senha`. "Esqueci a senha" ficou de fora: precisaria mandar e-mail, e o Render grátis bloqueia SMTP |
 | Ocorrência sem edição                  | `PUT /api/ocorrencias/{id}`: a pessoa atualiza a triagem (sintomas, unidade) e o resumo é refeito; a ocorrência ganha o CRUD completo |
 | Groq com `llama-3.3-70b-versatile`     | Groq com `openai/gpt-oss-120b`: o Groq desligou o Llama 3.3 70B nos planos grátis e developer em 16/08/2026 e indica este no lugar ([deprecations](https://console.groq.com/docs/deprecations)) |
 

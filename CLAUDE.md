@@ -91,6 +91,7 @@ Todo erro sai no formato do contrato, montado pelo `TratadorGlobalDeErros`:
 - Token inválido ou vencido **não barra** rota pública: o app logado com o token vencido continua vendo as unidades no SOS.
 - 401 e 403 saem no formato do contrato (`RespostasDeSeguranca`): sem token, "Faça login para continuar."; com token ruim, "Sessão expirada ou inválida. Entre novamente."
 - Login errado: 401 "E-mail ou senha incorretos", igual para e-mail inexistente e senha errada.
+- Trocar a senha (`PUT /api/usuarios/me/senha`, `UsuarioService.alterarSenha`): confere a atual com o BCrypt; errada é **400 no campo `senhaAtual`**, nunca 401 (o app encerraria a sessão). A nova segue a regra do cadastro e precisa ser diferente da atual. Sem "esqueci a senha": o Render grátis bloqueia SMTP.
 - Quem está logado: `@AuthenticationPrincipal UsuarioAutenticado` (id, email, perfil). **Nunca** confiar num id de usuário que venha no corpo.
 - E-mail sempre `trim().toLowerCase()` (no construtor do record); telefone vazio vira `null`.
 - `JWT_SECRET` em base64 com 32+ bytes; sem ele, segredo aleatório por subida (só serve no computador).

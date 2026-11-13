@@ -94,6 +94,23 @@ paths:
         '400': { $ref: '#/components/responses/Erro400' }
         '401': { $ref: '#/components/responses/Erro401' }
 
+  /api/usuarios/me/senha:
+    put:
+      tags: [Usuarios]
+      summary: Troca a senha (confere a senha atual)
+      description: >
+        Senha atual errada responde 400 com o campo senhaAtual (não 401, que encerraria
+        a sessão no app). A nova senha segue a regra do cadastro e precisa ser diferente da atual.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlterarSenhaRequest' }
+      responses:
+        '204': { description: Senha trocada }
+        '400': { $ref: '#/components/responses/Erro400' }
+        '401': { $ref: '#/components/responses/Erro401' }
+
   /api/unidades:
     get:
       tags: [Unidades]
@@ -530,6 +547,17 @@ components:
       properties:
         nome: { type: string, minLength: 2, maxLength: 120 }
         telefone: { type: string, nullable: true, pattern: '^[0-9]{10,11}$' }
+
+    AlterarSenhaRequest:
+      type: object
+      required: [senhaAtual, novaSenha]
+      properties:
+        senhaAtual: { type: string }
+        novaSenha:
+          type: string
+          minLength: 8
+          maxLength: 72
+          description: pelo menos uma letra e um número (a mesma regra do cadastro)
 
     UnidadeRequest:
       type: object
